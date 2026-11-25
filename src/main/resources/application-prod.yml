@@ -2,8 +2,14 @@
 # (DELIBERA_DB_URL, DELIBERA_DB_USER, DELIBERA_DB_PASSWORD, DELIBERA_JWT_SECRET,
 # DELIBERA_CORS_ORIGINES, DELIBERA_SMTP_*).
 server:
-  # L'API est derrière Nginx, qui termine le HTTPS.
+  # L'API est derrière Nginx : elle n'écoute que sur la machine (SERVER_ADDRESS=127.0.0.1 sur l'EC2).
   forward-headers-strategy: framework
+  # Au redémarrage (déploiement), les requêtes en cours se terminent avant l'arrêt.
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
 springdoc:
   api-docs:

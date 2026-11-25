@@ -58,7 +58,7 @@ La conception de référence est le **cahier de conception**, dans sa version en
 ./mvnw verify
 ```
 
-Les tests d'intégration démarrent PostgreSQL dans Docker. Le rapport de couverture est produit dans `target/site/jacoco/index.html`. L'intégration continue (`.github/workflows/ci.yml`) lance la même commande à chaque push et à chaque demande de fusion.
+Les tests d'intégration démarrent PostgreSQL dans Docker. Le rapport de couverture est produit dans `target/site/jacoco/index.html`. Le pipeline (`.github/workflows/ci-cd.yml`) lance la même commande à chaque push sur `main` ou `develop` et à chaque demande de fusion vers ces branches.
 
 ## Organisation du code
 
@@ -103,6 +103,26 @@ Les règles complètes de contribution (branches, documentation de chaque foncti
 - **Schéma** : uniquement par migrations Flyway (`src/main/resources/db/migration`, `V<n>__<description>.sql`) ; Hibernate se contente de vérifier. Chaque table a sa séquence d'identifiants, `<table>_seq` avec un pas de 50, pour permettre l'enregistrement par lots.
 - **Git** : branches `main`, `develop` et `feature/*` ; messages au format Conventional Commits (`feat: …`, `fix: …`) ; revue obligatoire avant fusion.
 - **Secrets** : uniquement dans des variables d'environnement, jamais dans le dépôt. Aucune note ni donnée d'identité dans les journaux.
+
+## Déploiement continu
+
+**Chaque push sur `main` déploie l'API en production**, sur l'instance EC2 gérée par Terraform (dépôt `PROJET-TUTORE-ISI-5/infra`).
+
+| Étape | Où | Détail |
+| --- | --- | --- |
+| 1. Compilation et tests | GitHub Actions | `./mvnw verify` (tests unitaires et d'intégration). Le JAR n'est produit que si tout passe. |
+| 2. Envoi | GitHub Actions → EC2 (SSH) | Le JAR testé et `deploy/remote-deploy.sh` sont copiés sur l'instance. |
+| 3. Sauvegarde | EC2 | `pg_dump` de la base avant la nouvelle version ; les 10 dernières sont gardées dans `/var/backups/delibera-api`. |
+| 4. Activation | EC2 | Nouvelle version dans `/opt/delibera-api/releases/<commit>`, lien `current` basculé, service `delibera-api` redémarré. Flyway applique les migrations au démarrage. |
+| 5. Contrôle de santé | EC2 | `/actuator/health` doit répondre `UP` en moins de 3 minutes, **sinon retour automatique à la version précédente**. |
+| 6. Vérification | GitHub Actions → Internet | `http://<EC2_HOST>/api/v1/…` doit répondre 401 (Nginx, API et Spring Security en place). |
+
+- **Retour arrière manuel** : Actions > CI/CD > *Run workflow* sur `main`, action `revenir`. La version qui tournait avant l'actuelle est réactivée, sans recompiler.
+- **Redéploiement** : même écran, action `deployer`.
+- **Sur l'instance** : `sudo journalctl -u delibera-api -f` (journal), `sudo systemctl status delibera-api`.
+- **Configuration de production** : `/etc/delibera-api/delibera-api.env`, créé par Terraform. Les secrets (base, JWT) sont générés sur l'instance et n'en sortent pas.
+- **Migrations** : une migration doit rester compatible avec la version précédente de l'API, car le retour arrière ne défait pas le schéma (AGENT.md, section 7). En dernier recours, restaurer la sauvegarde d'avant déploiement avec `pg_restore`.
+- **GitHub** : variable `EC2_HOST` et secret `EC2_SSH_KEY`, les mêmes que pour `delibera-ui` (au niveau de l'organisation ou du dépôt). L'environnement `production` peut exiger une approbation avant chaque déploiement (Settings > Environments).
 
 ## Configuration (profil `prod`)
 

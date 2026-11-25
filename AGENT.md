@@ -252,6 +252,9 @@ Swagger UI et `/v3/api-docs` sont désactivés en production (`application-prod.
 - Le schéma est géré **uniquement par Flyway** (`src/main/resources/db/migration`). Hibernate ne fait que vérifier (`ddl-auto: validate`). Ne passez jamais `ddl-auto` à `update` ou `create`.
 - Nommage des migrations : `V<n>__<description_en_minuscules>.sql`, par exemple `V3__creer_tables_referentiel.sql`. Avant d'en créer une, regardez le dernier numéro sur `develop`. En cas de collision avec une autre branche, renumérotez **avant** la fusion.
 - **Une migration déjà fusionnée dans `develop` ne se modifie jamais** : écrivez une nouvelle migration.
+- **Une migration reste compatible avec la version précédente de l'API.** En cas d'échec d'un déploiement, le pipeline réactive automatiquement l'ancienne version, mais il ne défait pas le schéma. Pour renommer ou supprimer une colonne ou une table, procédez en deux livraisons :
+  1. ajouter le nouvel élément, et faire fonctionner le code avec les deux ;
+  2. supprimer l'ancien élément dans une livraison suivante.
 - Pour chaque table :
   - nom en `snake_case` au singulier (`annee_academique`) ;
   - colonnes `id`, `verrou`, `cree_le` et `modifie_le` ;
@@ -386,7 +389,7 @@ Exemple : le choix de séquences plutôt que de colonnes auto-incrémentées pou
 
 | Branche | Rôle | Qui écrit dessus |
 | --- | --- | --- |
-| `main` | Version stable, une étiquette `v0.<itération>.0` à la fin de chaque itération | Fusion depuis `develop` uniquement, par l'équipe |
+| `main` | Version en production : **chaque push sur `main` déploie l'API** (README, « Déploiement continu »). Étiquette `v0.<itération>.0` à la fin de chaque itération. | Fusion depuis `develop` uniquement, par l'équipe |
 | `develop` | Intégration | Fusion des demandes de fusion relues |
 | `feature/<module>-<sujet>` | Une fonctionnalité | L'agent ou le développeur qui l'a créée |
 | `fix/<module>-<sujet>` | Une correction | Idem |
