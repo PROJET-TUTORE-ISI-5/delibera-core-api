@@ -4,7 +4,7 @@ API REST de **Delibera**, la plateforme de délibération des étudiants de Sain
 
 Chaque école est un client autonome du service (SaaS) : ses données, ses utilisateurs, ses règles de passage et ses paramètres sont isolés de ceux des autres écoles. La plateforme ne se connecte pas au système d'information des écoles ; les données entrent par import de fichiers Excel ou CSV.
 
-La conception de référence est le **cahier de conception v1.2** (architecture, modules, classes, algorithmes A1 à A8), qui s'appuie sur le cahier d'analyse.
+La conception de référence est le **cahier de conception**, dans sa version en ligne la plus récente (fin novembre 2026) : architecture, modules, classes, algorithmes A1 à A8. Il s'appuie sur le cahier d'analyse. Chaque module en reprend les spécifications dans son fichier `SPEC.md`.
 
 ## Technologies
 
@@ -15,7 +15,7 @@ La conception de référence est le **cahier de conception v1.2** (architecture,
 | Sécurité | Jetons JWT (HS256), BCrypt, contrôle d'accès par `@PreAuthorize` |
 | Documentation de l'API | springdoc-openapi (OpenAPI 3, Swagger UI) |
 | Conversion entités ↔ DTO | MapStruct |
-| Tests | JUnit 5, Mockito, Testcontainers, couverture JaCoCo |
+| Tests | JUnit 6 (Jupiter), Mockito, Testcontainers, couverture JaCoCo |
 | Construction et livraison | Maven (wrapper inclus), Docker, GitHub Actions |
 
 ## Prérequis
@@ -70,15 +70,19 @@ Un paquetage par module du cahier de conception (tableau 5) :
 | `com.delibera.ecole` | M2 Écoles clientes | CU15 |
 | `com.delibera.referentiel` | M3 Référentiel et maquettes | CU01 |
 | `com.delibera.regles` | M4 Règles et paramètres | CU02, CU13 |
-| `com.delibera.importation` | M5 Import | CU03 |
-| `com.delibera.calcul` | M6 Moteur de calcul | CU04 à CU07 |
-| `com.delibera.deliberation` | M7 Délibération et jury | CU04 à CU08, CU14, CU17 |
+| `com.delibera.importation` | M5 Import | CU03, CU07 |
+| `com.delibera.calcul` | M6 Moteur de calcul | CU04 à CU06 |
+| `com.delibera.deliberation` | M7 Délibération et jury | CU04 à CU06, CU08, CU14, CU17 |
 | `com.delibera.documents` | M8 Documents et statistiques | CU09, CU10 |
 | `com.delibera.audit` | M9 Audit | CU11 |
 | `com.delibera.notification` | M10 Notifications | CU12, CU17, CU18 |
 | `com.delibera.commun` | Éléments partagés | — |
 
-Dans chaque module : `web` (contrôleurs REST et DTO), `service` (transactions et règles métier), `domaine` (entités JPA), `depot` (dépôts Spring Data).
+Dans chaque module :
+
+- `SPEC.md` : spécifications fonctionnelles et techniques du module (cas d'utilisation, modèle, règles, services, algorithmes, routes, tests d'acceptation, questions ouvertes) ;
+- `README.md` : état de l'implémentation, créé avec la première fonctionnalité du module ;
+- les sous-paquetages `web` (contrôleurs REST et DTO), `service` (transactions et règles métier), `domaine` (entités JPA) et `depot` (dépôts Spring Data).
 
 Éléments déjà en place dans `commun` :
 
@@ -88,7 +92,7 @@ Dans chaque module : `web` (contrôleurs REST et DTO), `service` (transactions e
 
 ## Conventions
 
-Reprises du cahier de conception (section 4.2.2) :
+Les règles complètes de contribution (branches, documentation de chaque fonctionnalité, patron de développement, tests, interdits) sont dans [AGENT.md](AGENT.md). Elles s'appliquent aux agents comme aux membres de l'équipe. En résumé, d'après le cahier de conception (section 4.2.2) :
 
 - **Couches** : contrôleur REST (DTO) → service (transactions, règles métier) → dépôt. Les entités ne sortent jamais de la couche service ; la conversion passe par MapStruct.
 - **Nommage** : Google Java Style (indentation de 2 espaces, 100 colonnes). Les classes métier gardent les noms du modèle d'analyse (`Deliberation`, `ReglePassage`) ; les suffixes techniques sont en anglais (`DeliberationController`, `DeliberationService`, `DeliberationRepository`).
@@ -109,6 +113,6 @@ Voir `.env.example`. Variables principales : `DELIBERA_DB_URL`, `DELIBERA_DB_USE
 Quatre itérations de deux semaines (cahier de conception, section 4.1) :
 
 1. **Socle** : sécurité, écoles clientes, référentiel et import (CU00, CU01, CU03, CU12, CU15, CU16, CU18).
-2. **Calcul** : règles, paramètres et pré-délibération, validés par les tests T01 à T10 (CU02, CU04, CU13).
-3. **Séance du jury** : composition du jury, cas critiques, décisions, rattrapage (CU05, CU06, CU07, CU17).
+2. **Calcul** : règles, paramètres, import des rattrapages et pré-délibération, validés par les tests T01 à T10 (CU02, CU04, CU07, CU13).
+3. **Séance du jury** : composition du jury, cas critiques et décisions (CU05, CU06, CU17).
 4. **Clôture et suivi** : validation, PV, listes, statistiques, audit, réclamations (CU08 à CU11, CU14).
