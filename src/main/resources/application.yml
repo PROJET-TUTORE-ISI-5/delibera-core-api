@@ -1,0 +1,57 @@
+# Configuration commune. Les secrets viennent toujours de variables d'environnement.
+# Profils : dev (poste du développeur), prod (serveur). Les tests utilisent le profil test.
+spring:
+  application:
+    name: delibera-core-api
+  datasource:
+    url: ${DELIBERA_DB_URL:jdbc:postgresql://localhost:5432/delibera}
+    username: ${DELIBERA_DB_USER:delibera}
+    password: ${DELIBERA_DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Le schéma est géré uniquement par Flyway ; Hibernate vérifie qu'il correspond aux entités.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          # Enregistrement par lots lors de la pré-délibération (algorithme A1).
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  flyway:
+    locations: classpath:db/migration
+  mail:
+    host: ${DELIBERA_SMTP_HOST:localhost}
+    port: ${DELIBERA_SMTP_PORT:587}
+    username: ${DELIBERA_SMTP_USER:}
+    password: ${DELIBERA_SMTP_PASSWORD:}
+    properties:
+      "[mail.smtp.starttls.enable]": true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  health:
+    # Un serveur SMTP indisponible ne doit pas rendre l'API « hors service » : les courriels
+    # sont renvoyés plus tard par le module M10.
+    mail:
+      enabled: false
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+delibera:
+  securite:
+    jwt-secret: ${DELIBERA_JWT_SECRET:}
+    duree-jeton-acces: 15m
+    inactivite-max: 30m
+    origines-autorisees: ${DELIBERA_CORS_ORIGINES:}

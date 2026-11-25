@@ -1,0 +1,17 @@
+# Serveur : toutes les valeurs sensibles viennent des variables d'environnement
+# (DELIBERA_DB_URL, DELIBERA_DB_USER, DELIBERA_DB_PASSWORD, DELIBERA_JWT_SECRET,
+# DELIBERA_CORS_ORIGINES, DELIBERA_SMTP_*).
+server:
+  # L'API est derrière Nginx, qui termine le HTTPS.
+  forward-headers-strategy: framework
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  endpoint:
+    health:
+      show-details: never

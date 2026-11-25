@@ -1,0 +1,5 @@
+# Profil des tests : la base PostgreSQL est fournie par Testcontainers.
+delibera:
+  securite:
+    jwt-secret: secret-reserve-aux-tests-automatises-0123456789
+    origines-autorisees: http://localhost:5173

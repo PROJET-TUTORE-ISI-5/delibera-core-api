@@ -1,0 +1,29 @@
+# Services de développement : PostgreSQL 16 et Mailpit (faux serveur SMTP).
+# Lancement : docker compose up -d
+# Courriels envoyés par l'API : http://localhost:8025
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: delibera
+      POSTGRES_USER: delibera
+      POSTGRES_PASSWORD: delibera
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - delibera-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delibera -d delibera"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  delibera-pgdata:

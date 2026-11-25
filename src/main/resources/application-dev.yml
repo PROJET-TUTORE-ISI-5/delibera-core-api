@@ -1,0 +1,21 @@
+# Poste du développeur : base PostgreSQL et Mailpit lancés par compose.yaml.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/delibera
+    username: delibera
+    password: delibera
+  mail:
+    host: localhost
+    port: 1025
+    properties:
+      "[mail.smtp.starttls.enable]": false
+
+delibera:
+  securite:
+    # Secret réservé au développement : ne jamais le réutiliser ailleurs.
+    jwt-secret: secret-de-developpement-a-ne-jamais-utiliser-en-production
+    origines-autorisees: http://localhost:5173
+
+logging:
+  level:
+    com.delibera: DEBUG
