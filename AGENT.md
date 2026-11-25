@@ -158,8 +158,80 @@ Le cahier crée quelques dépendances dans les deux sens : M1 ↔ M2, M1 ↔ M7,
 - Les DTO de requête sont validés par Bean Validation (`@Valid`, `@NotNull`, `@Size`…), avec des messages en français.
 - Les listes longues sont paginées (`Pageable` de Spring Data).
 - Les objets modifiables en séance (`Deliberation`, `SituationAcademique`, `DecisionJury`) exposent leur `verrou`, et le client le renvoie à chaque modification. Un écart donne 409.
-- Chaque contrôleur porte `@Tag` (nom du module). Chaque méthode porte `@Operation`, avec un résumé en français et les codes d'erreur possibles.
+- **Toute route est documentée dans Swagger (OpenAPI) dans le même commit que son code** : voir la section 5.1.
 - Une route publique (sans jeton) doit être ajoutée explicitement dans `SecuriteConfig` et approuvée par l'équipe.
+
+### 5.1. Documentation OpenAPI (Swagger) de chaque route
+
+springdoc génère le contrat de l'API à partir du code : `/v3/api-docs`, affiché dans Swagger UI (`/swagger-ui.html`). Une route apparaît donc toujours dans Swagger. La règle porte sur **la qualité de sa documentation**, qui sert de contrat au client web et aux testeurs.
+
+**Obligatoire pour chaque route :**
+
+1. **Contrôleur** : `@Tag(name = "M<n> – <Nom du module>", description = "…")`. Un seul nom de tag par module, même s'il a plusieurs contrôleurs.
+2. **Méthode** : `@Operation` avec :
+   - `summary` : verbe à l'infinitif, moins de 80 caractères (« Créer une école cliente ») ;
+   - `description` : cas d'utilisation, **permission exigée**, règles métier importantes.
+3. **Réponses** : un `@ApiResponse` pour chaque réponse possible.
+   - **Réussite** (200, 201 ou 204) : avec le schéma du DTO renvoyé.
+   - **Erreurs** : avec le type `application/problem+json` et le schéma `ProblemDetail`.
+     - Sur toute route protégée : **401** et **403**.
+     - Selon le cas : 400 (validation), 404, 409 (conflit, verrou) et 422 (règle métier).
+     - La description cite les **codes d'erreur métier** possibles, par exemple `MOTIF_OBLIGATOIRE`.
+4. **Paramètres** : `@Parameter(description = "…", example = "…")` sur chaque paramètre de chemin et de requête. Pagination : `@ParameterObject Pageable`.
+5. **DTO** (`record` de requête et de réponse) : `@Schema(description = "…")` sur le `record` et sur chaque champ, avec un `example`. Les contraintes Bean Validation (`@NotBlank`, `@Size`, `@DecimalMin`…) suffisent pour « obligatoire », « minimum » et « maximum » : springdoc les reprend.
+
+**Interdits** :
+- une entité JPA dans un schéma ;
+- un exemple avec une donnée réelle (nom, matricule, note d'un vrai étudiant) ;
+- une route technique visible sans raison : la masquer avec `@Hidden`.
+
+**Exemple :**
+
+```java
+@RestController
+@RequestMapping("/api/v1/ecoles")
+@Tag(name = "M2 – Écoles clientes", description = "Création, suspension et réactivation des écoles (CU15)")
+class EcoleController {
+
+  @Operation(
+      summary = "Créer une école cliente",
+      description = "Crée l'école et son premier administrateur, qui reçoit un lien d'activation. "
+          + "CU15. Permission : ECOLE_GERER (administrateur de la plateforme).")
+  @ApiResponse(responseCode = "201", description = "École créée",
+      content = @Content(schema = @Schema(implementation = EcoleResponse.class)))
+  @ApiResponse(responseCode = "400", description = "Données invalides",
+      content = @Content(mediaType = "application/problem+json",
+          schema = @Schema(implementation = ProblemDetail.class)))
+  @ApiResponse(responseCode = "401", description = "Jeton absent, invalide ou expiré",
+      content = @Content(mediaType = "application/problem+json",
+          schema = @Schema(implementation = ProblemDetail.class)))
+  @ApiResponse(responseCode = "403", description = "Permission ECOLE_GERER absente",
+      content = @Content(mediaType = "application/problem+json",
+          schema = @Schema(implementation = ProblemDetail.class)))
+  @ApiResponse(responseCode = "409", description = "CODE_ECOLE_DEJA_UTILISE : code déjà utilisé",
+      content = @Content(mediaType = "application/problem+json",
+          schema = @Schema(implementation = ProblemDetail.class)))
+  @PostMapping
+  ResponseEntity<EcoleResponse> creer(@Valid @RequestBody CreerEcoleRequest requete) {
+    // ...
+  }
+}
+
+@Schema(description = "Création d'une école cliente et de son premier administrateur")
+record CreerEcoleRequest(
+    @Schema(description = "Code unique de l'école", example = "ECO1")
+        @NotBlank @Size(max = 20) String code,
+    @Schema(description = "Nom de l'école", example = "École d'exemple")
+        @NotBlank String nom) {}
+```
+
+**Vérification :**
+- Ouvrir Swagger UI.
+- Cliquer sur **Authorize** et coller un jeton JWT.
+- Essayer la route avec un cas de réussite et un cas d'erreur.
+- Le test `DocumentationOpenApiTest` parcourt `/v3/api-docs` et **fait échouer la construction** si une route n'a pas de résumé, si son tag n'a pas de description, si sa réponse de réussite n'est pas documentée, ou si une route protégée ne documente pas 401 et 403.
+
+Swagger UI et `/v3/api-docs` sont désactivés en production (`application-prod.yml`).
 
 ## 6. Sécurité
 
@@ -208,7 +280,7 @@ Le cahier crée quelques dépendances dans les deux sens : M1 ↔ M2, M1 ↔ M7,
 - **Couverture d'au moins 80 %** sur `calcul` et `regles` (rapport JaCoCo : `target/site/jacoco/index.html`).
 - Chaque algorithme (A1 à A8) a des tests unitaires qui reprennent les exemples du cahier de conception, par exemple « 42 crédits, seuil 45, marge 3 : `A_DELIBERER` ». Ajoutez les cas limites : égalité exacte au seuil, note absente, `DISPENSE`, `ABSENT`, EC éliminatoire.
 - Chaque nouvelle entité rattachée à une école a un **test d'isolation** : des données de l'école A sont invisibles depuis l'école B, en recherche comme en chargement par identifiant.
-- Chaque nouvelle route a au moins trois tests : 401 sans jeton, 403 sans la permission, et succès avec la permission.
+- Chaque nouvelle route a au moins trois tests : 401 sans jeton, 403 sans la permission, et succès avec la permission. Sa documentation OpenAPI est vérifiée par `DocumentationOpenApiTest` (section 5.1).
 - Chaque correction de bogue commence par un test qui reproduit le bogue.
 - Nom des méthodes de test : une phrase en français, en camelCase, qui décrit le comportement (`uneDetteRepriseNeCompteQuAuCumul`). Corps en trois temps, séparés par des commentaires : `// Étant donné`, `// Quand`, `// Alors`.
 - Données de test **fictives uniquement**. Construisez-les avec des fabriques dans `src/test/java/com/delibera/<module>/fixtures/`.
@@ -394,7 +466,7 @@ La relecture par un membre de l'équipe est obligatoire avant la fusion.
    5. les DTO et les mappers ;
    6. les contrôleurs, avec leurs tests ;
    7. les tests d'intégration (isolation, sécurité) ;
-   8. les annotations OpenAPI.
+   8. la documentation OpenAPI de chaque route (section 5.1), essayée dans Swagger UI.
 6. **Vérifier** : `./mvnw verify` au vert, couverture regardée, Swagger UI cohérent.
 7. **Finaliser la documentation** :
    - README du module (état « terminée ») ;
@@ -485,6 +557,7 @@ Une fonctionnalité est terminée quand **toutes** ces cases sont cochées :
 - [ ] Les tests unitaires, de contrôleur, d'isolation et de sécurité sont écrits et passent. La couverture est respectée pour `calcul` et `regles`.
 - [ ] `./mvnw verify` réussit.
 - [ ] Le README du module est à jour (routes, règles, codes d'erreur, tests, écarts avec le `SPEC.md`).
-- [ ] OpenAPI est documenté (`@Tag`, `@Operation`).
+- [ ] Chaque route est documentée dans Swagger (section 5.1) : tag décrit, résumé, description avec la permission, toutes les réponses avec leurs codes d'erreur, paramètres et DTO décrits avec des exemples fictifs.
+- [ ] `DocumentationOpenApiTest` passe, et la route a été essayée dans Swagger UI.
 - [ ] Aucun secret, aucune donnée réelle, aucun seuil codé en dur.
 - [ ] La branche est poussée et la demande de fusion vers `develop` est rédigée.
