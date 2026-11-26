@@ -142,13 +142,14 @@ Les règles complètes de contribution (branches, documentation de chaque foncti
 - **Retour arrière manuel** : Actions > CI/CD > *Run workflow* sur `main`, action `revenir`. La version qui tournait avant l'actuelle est réactivée ; son image est encore sur l'instance.
 - **Redéploiement** : même écran, action `deployer`.
 - **Sur l'instance** : `sudo delibera-compose ps` (état), `sudo delibera-compose logs -f api` (journal), `sudo delibera-compose restart api`. `delibera-compose` est `docker compose` appliqué à la version en service.
+- **Documentation en ligne** : http://<EC2_HOST>/swagger-ui.html, quand la variable Terraform `api_swagger` vaut `true` (`DELIBERA_SWAGGER=true` sur l'instance). Elle est alors publique ; les routes restent protégées par jeton.
 - **Configuration de production** : `/etc/delibera-api/delibera-api.env`, créé par Terraform (modèle : `.env.example`). Les secrets (base, JWT) sont générés sur l'instance et n'en sortent pas.
 - **Migrations** : une migration doit rester compatible avec la version précédente de l'API, car le retour arrière ne défait pas le schéma (AGENT.md, section 7). En dernier recours, restaurer la sauvegarde d'avant déploiement (README du dépôt `infra`).
 - **GitHub** : variable `EC2_HOST` et secret `EC2_SSH_KEY`, les mêmes que pour `delibera-ui` (au niveau de l'organisation ou du dépôt). Le registre ghcr.io utilise le jeton de GitHub Actions. L'environnement `production` peut exiger une approbation avant chaque déploiement (Settings > Environments).
 
 ## Configuration (profils `prod,docker`)
 
-Voir `.env.example`. Variables principales : `DELIBERA_DB_USER`, `DELIBERA_DB_PASSWORD`, `DELIBERA_JWT_SECRET` (au moins 32 caractères), `DELIBERA_CORS_ORIGINES`, `JAVA_TOOL_OPTIONS` (mémoire de la JVM), `DELIBERA_SMTP_HOST`, `DELIBERA_SMTP_PORT`, `DELIBERA_SMTP_USER`, `DELIBERA_SMTP_PASSWORD`. Dans un conteneur, la base est jointe par défaut à `jdbc:postgresql://postgres:5432/delibera` (`DELIBERA_DB_URL` pour changer).
+Voir `.env.example`. Variables principales : `DELIBERA_DB_USER`, `DELIBERA_DB_PASSWORD`, `DELIBERA_JWT_SECRET` (au moins 32 caractères), `DELIBERA_CORS_ORIGINES`, `DELIBERA_SWAGGER` (`true` pour publier Swagger UI, masqué par défaut), `JAVA_TOOL_OPTIONS` (mémoire de la JVM), `DELIBERA_SMTP_HOST`, `DELIBERA_SMTP_PORT`, `DELIBERA_SMTP_USER`, `DELIBERA_SMTP_PASSWORD`. Dans un conteneur, la base est jointe par défaut à `jdbc:postgresql://postgres:5432/delibera` (`DELIBERA_DB_URL` pour changer).
 
 ## Feuille de route
 

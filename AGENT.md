@@ -231,7 +231,7 @@ record CreerEcoleRequest(
 - Essayer la route avec un cas de réussite et un cas d'erreur.
 - Le test `DocumentationOpenApiTest` parcourt `/v3/api-docs` et **fait échouer la construction** si une route n'a pas de résumé, si son tag n'a pas de description, si sa réponse de réussite n'est pas documentée, ou si une route protégée ne documente pas 401 et 403.
 
-Swagger UI et `/v3/api-docs` sont désactivés en production (`application-prod.yml`).
+En production, Swagger UI et `/v3/api-docs` sont masqués par défaut (`application-prod.yml`) ; `DELIBERA_SWAGGER=true` les publie (variable Terraform `api_swagger`, dépôt `infra`).
 
 ## 6. Sécurité
 
@@ -552,7 +552,7 @@ docker compose --profile api up -d --build                   # API en conteneur 
 | --- | --- | --- |
 | `dev` | poste du développeur | base et Mailpit de `compose.yaml` sur localhost, secret JWT de développement, Swagger |
 | `docker` | toujours après un autre profil (`dev,docker`, `prod,docker`) | uniquement ce qui change dans un conteneur : noms des services (`postgres`, `mailpit`), écoute sur toutes les interfaces, sondes de santé |
-| `prod` | EC2, en conteneur | tout vient de variables d'environnement, Swagger désactivé |
+| `prod` | EC2, en conteneur | tout vient de variables d'environnement, Swagger masqué sauf `DELIBERA_SWAGGER=true` |
 | `test` | tests automatisés | base Testcontainers |
 
 - Un nouveau réglage commun va dans `application.yml`, avec une variable d'environnement `DELIBERA_…` et une valeur par défaut sûre.

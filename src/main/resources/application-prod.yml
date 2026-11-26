@@ -11,11 +11,13 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+# Documentation (Swagger UI, /swagger-ui.html) masquée par défaut en production ;
+# DELIBERA_SWAGGER=true l'affiche (réglage de l'instance, variable Terraform api_swagger).
 springdoc:
   api-docs:
-    enabled: false
+    enabled: ${DELIBERA_SWAGGER:false}
   swagger-ui:
-    enabled: false
+    enabled: ${DELIBERA_SWAGGER:false}
 
 management:
   endpoint:
