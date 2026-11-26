@@ -1,5 +1,6 @@
 # Configuration commune. Les secrets viennent toujours de variables d'environnement.
-# Profils : dev (poste du développeur), prod (serveur). Les tests utilisent le profil test.
+# Profils : dev (poste du développeur), prod (serveur), docker (surcouche quand l'API tourne dans
+# un conteneur : dev,docker en local, prod,docker sur l'EC2). Les tests utilisent le profil test.
 spring:
   application:
     name: delibera-core-api

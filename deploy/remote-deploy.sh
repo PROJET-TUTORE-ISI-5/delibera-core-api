@@ -1,155 +1,171 @@
 #!/usr/bin/env bash
-# Exécuté sur l'EC2 par GitHub Actions (utilisateur ubuntu).
+# Déploiement de l'API Delibera sur l'EC2, en conteneurs (lancé par GitHub Actions en SSH).
 #
-#   bash remote-deploy.sh deployer <version>   installe /tmp/delibera-api.jar comme nouvelle version
-#   bash remote-deploy.sh revenir              réactive la version qui tournait avant l'actuelle
+#   bash remote-deploy.sh deployer <image> [<utilisateur du registre>]
+#       installe /tmp/delibera-api-compose.yaml et l'image <image> comme nouvelle version.
+#       Le jeton du registre (ghcr.io) arrive sur l'entrée standard ; il n'est jamais écrit sur le disque
+#       de façon durable.
+#   bash remote-deploy.sh revenir
+#       réactive la version précédente (son image est encore sur l'instance).
 #
-# Déploiement :
-#   1. sauvegarde de la base (les migrations Flyway s'appliquent au démarrage de la nouvelle version) ;
-#   2. nouvelle version dans /opt/delibera-api/releases/<version>, lien « current » basculé ;
-#   3. redémarrage du service et contrôle de santé (/actuator/health = UP) ;
-#   4. en cas d'échec : retour automatique à la version précédente.
-# L'instance est préparée par Terraform (dépôt infra, scripts/backend-setup.sh).
+# Une version = /opt/delibera-api/releases/<version>/{compose.yaml,version.env}. Les liens current et
+# previous désignent la version active et la précédente ; delibera-compose (Terraform) lance current.
+# Avant chaque version, la base est sauvegardée. Si /actuator/health ne répond pas UP à temps, la
+# version précédente est réactivée automatiquement.
 set -euo pipefail
 
-ACTION="${1:?action manquante : deployer <version> ou revenir}"
-VERSION="${2:-}"
-
-SERVICE=delibera-api
 BASE=/opt/delibera-api
 RELEASES="$BASE/releases"
-JAR_RECU=/tmp/delibera-api.jar
-SAUVEGARDES=/var/backups/delibera-api
+COMPOSE_RECU=/tmp/delibera-api-compose.yaml
+COMPOSE=/usr/local/sbin/delibera-compose
+SAUVEGARDE=/usr/local/sbin/delibera-api-sauvegarde
 SANTE_URL=http://127.0.0.1:8080/actuator/health
-ATTENTE_MAX=180    # secondes : démarrage de Spring Boot sur une petite instance
+ATTENTE_MAX=180
 GARDER_VERSIONS=5
-GARDER_SAUVEGARDES=10
 
-echec() { echo "✖ $*" >&2; exit 1; }
+echec() { echo "✖ $*"; exit 1; }
 
-[ -f "$BASE/.provisioned" ] || echec "l'instance n'est pas préparée pour l'API : lancer « terraform apply » dans le dépôt infra"
+if [ ! -x "$COMPOSE" ] || [ ! -x "$SAUVEGARDE" ] || ! command -v docker >/dev/null; then
+  echec "instance non préparée pour Docker : relancer « terraform apply » (dépôt infra)"
+fi
+[ -f "$BASE/.provisioned" ] || echec "instance non préparée : $BASE/.provisioned absent"
 
-en_bonne_sante() { curl -fs --max-time 3 "$SANTE_URL" | grep -q '"status":"UP"'; }
+version_valide() { [ -f "$1/compose.yaml" ] && [ -f "$1/version.env" ]; }
+
+image_de() { sed -n 's/^DELIBERA_API_IMAGE=//p' "$1/version.env"; }
+
+en_bonne_sante() { curl -fsS --max-time 5 "$SANTE_URL" 2>/dev/null | grep -q '"status":"UP"'; }
 
 attendre_sante() {
-  local i
-  for i in $(seq 1 "$ATTENTE_MAX"); do
-    if en_bonne_sante; then
-      echo "  santé : UP après ${i} s"
-      return 0
+  local debut=$SECONDS
+  until en_bonne_sante; do
+    if (( SECONDS - debut >= ATTENTE_MAX )); then
+      return 1
     fi
-    sleep 1
+    sleep 3
   done
-  return 1
-}
-
-# Bascule « current » vers une version ; « previous » garde celle qui tournait avant.
-activer() {
-  local cible="$1" actuelle
-  actuelle="$(readlink -e "$BASE/current" || true)"
-  if [ -n "$actuelle" ] && [ "$actuelle" != "$cible" ]; then
-    ln -sfn "$actuelle" "$BASE/previous"
-  fi
-  ln -sfn "$cible" "$BASE/current"
-  sudo /usr/bin/systemctl restart "$SERVICE"
-}
-
-# Supprime les anciennes versions, sauf « current » et « previous »
-nettoyer_versions() {
-  local garder_a garder_b
-  garder_a="$(readlink -e "$BASE/current" || true)"
-  garder_b="$(readlink -e "$BASE/previous" || true)"
-  find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2- \
-    | tail -n +$((GARDER_VERSIONS + 1)) | while read -r ancienne; do
-      if [ "$ancienne" != "$garder_a" ] && [ "$ancienne" != "$garder_b" ]; then
-        rm -rf -- "$ancienne"
-      fi
-    done
+  echo "✔ en bonne santé après $(( SECONDS - debut )) s"
 }
 
 journal() {
-  echo "--- dernières lignes du journal de $SERVICE ---"
-  sudo /usr/bin/journalctl -u "$SERVICE" -n 80 --no-pager || true
+  echo "── derniers journaux de l'API ──"
+  sudo "$COMPOSE" logs --no-color --tail 80 api || true
 }
 
-sauvegarder_base() {
-  local fichier
-  fichier="$SAUVEGARDES/avant-$1-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  sudo -u postgres pg_dump -Fc -d delibera -f "$fichier"
-  echo "  sauvegarde : $fichier"
-  # Garde les $GARDER_SAUVEGARDES dernières sauvegardes d'avant déploiement (dossier réservé à postgres)
-  sudo find "$SAUVEGARDES" -maxdepth 1 -name 'avant-*.dump' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2- \
-    | tail -n +$((GARDER_SAUVEGARDES + 1)) | while read -r ancienne; do
-      sudo rm -f -- "$ancienne"
-    done
+# Lance la version $1 : previous <- ancienne current, current <- $1, puis docker compose up.
+activer() {
+  local cible="$1" actuelle
+  actuelle="$(readlink -e "$BASE/current" || true)"
+  if [ -n "$actuelle" ] && [ "$actuelle" != "$cible" ] && version_valide "$actuelle"; then
+    ln -sfn "$actuelle" "$BASE/previous"
+  fi
+  ln -sfn "$cible" "$BASE/current"
+  echo "▶ démarrage de $(basename "$cible") ($(image_de "$cible"))"
+  sudo "$COMPOSE" up -d --remove-orphans
 }
 
-conseil_restauration() {
-  cat <<EOF
-Si l'ancienne version refuse le schéma déjà migré, restaurer la sauvegarde d'avant déploiement :
-  sudo systemctl stop $SERVICE
-  sudo -u postgres pg_restore --clean --if-exists -d delibera <fichier .dump de $SAUVEGARDES>
-  sudo systemctl start $SERVICE
-EOF
-}
-
-case "$ACTION" in
-  deployer)
-    [ -n "$VERSION" ] || echec "identifiant de version manquant"
-    [ -f "$JAR_RECU" ] || echec "$JAR_RECU absent"
-    NOUVELLE="$RELEASES/$VERSION"
-    PRECEDENTE="$(readlink -e "$BASE/current" || true)"
-    LIEN_PREVIOUS="$(readlink -e "$BASE/previous" || true)"
-    echo "▶ déploiement de la version $VERSION"
-
-    sauvegarder_base "$VERSION"
-
-    rm -rf "$NOUVELLE" && mkdir -p "$NOUVELLE"
-    install -m 644 "$JAR_RECU" "$NOUVELLE/delibera-api.jar"
-    rm -f "$JAR_RECU"
-    touch "$NOUVELLE"   # date de la version = date du déploiement (tri des versions)
-
-    activer "$NOUVELLE"
-    if attendre_sante; then
-      nettoyer_versions
-      echo "✔ version $VERSION en ligne"
-      exit 0
-    fi
-
-    echo "✖ la version $VERSION ne répond pas"
-    journal
-    if [ -n "$PRECEDENTE" ] && [ -d "$PRECEDENTE" ] && [ "$PRECEDENTE" != "$NOUVELLE" ]; then
-      echo "↩ retour à la version $(basename "$PRECEDENTE")"
-      activer "$PRECEDENTE"
-      # La version en échec ne doit pas devenir la cible de « revenir »
-      if [ -n "$LIEN_PREVIOUS" ]; then ln -sfn "$LIEN_PREVIOUS" "$BASE/previous"; else rm -f "$BASE/previous"; fi
-      if attendre_sante; then
-        echo "✔ version $(basename "$PRECEDENTE") de nouveau en ligne"
-      else
-        echo "✖ la version précédente ne répond pas non plus"
-        journal
-        conseil_restauration
+# Garde les $GARDER_VERSIONS versions les plus récentes, plus current et previous ; supprime les
+# images des versions effacées.
+nettoyer_versions() {
+  local actuelle precedente version image
+  actuelle="$(readlink -e "$BASE/current" || true)"
+  precedente="$(readlink -e "$BASE/previous" || true)"
+  find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2- \
+    | tail -n +$(( GARDER_VERSIONS + 1 )) | while read -r version; do
+      if [ "$version" != "$actuelle" ] && [ "$version" != "$precedente" ]; then
+        image=""
+        if [ -f "$version/version.env" ]; then image="$(image_de "$version")"; fi
+        rm -rf "$version"
+        if [ -n "$image" ]; then sudo docker image rm "$image" >/dev/null 2>&1 || true; fi
       fi
-    fi
-    exit 1
-    ;;
+    done
+  sudo docker image prune -f >/dev/null || true
+}
 
-  revenir)
-    ACTUELLE="$(readlink -e "$BASE/current" || true)"
-    PRECEDENTE="$(readlink -e "$BASE/previous" || true)"
-    [ -n "$PRECEDENTE" ] && [ -d "$PRECEDENTE" ] || echec "aucune version précédente disponible"
-    echo "↩ retour de $(basename "${ACTUELLE:-aucune}") à $(basename "$PRECEDENTE")"
-    activer "$PRECEDENTE"
+recuperer_image() {
+  local image="$1" utilisateur="$2" jeton="" config
+  if [ ! -t 0 ]; then IFS= read -r jeton || true; fi
+  config="$(mktemp -d)"
+  # shellcheck disable=SC2064 # le dossier est connu maintenant : c'est voulu
+  trap "sudo rm -rf '$config'" EXIT
+  if [ -n "$jeton" ] && [ -n "$utilisateur" ]; then
+    printf '%s' "$jeton" | sudo DOCKER_CONFIG="$config" docker login "${image%%/*}" -u "$utilisateur" --password-stdin >/dev/null
+  fi
+  echo "▶ téléchargement de $image"
+  sudo DOCKER_CONFIG="$config" docker pull -q "$image" >/dev/null
+  sudo rm -rf "$config"
+  trap - EXIT
+}
+
+deployer() {
+  local image="$1" utilisateur="${2:-}" version nouvelle precedente lien_previous
+  [[ "$image" =~ ^[a-z0-9./_-]+:[A-Za-z0-9._-]+$ ]] || echec "image invalide : $image"
+  [ -f "$COMPOSE_RECU" ] || echec "$COMPOSE_RECU absent"
+  version="${image##*:}"
+  nouvelle="$RELEASES/$version"
+
+  recuperer_image "$image" "$utilisateur"
+
+  echo "▶ sauvegarde de la base avant $version"
+  sudo "$SAUVEGARDE" avant "$version"
+
+  precedente="$(readlink -e "$BASE/current" || true)"
+  if [ -n "$precedente" ] && ! version_valide "$precedente"; then precedente=""; fi
+  lien_previous="$(readlink -e "$BASE/previous" || true)"
+
+  mkdir -p "$nouvelle"
+  install -m 644 "$COMPOSE_RECU" "$nouvelle/compose.yaml"
+  printf 'DELIBERA_API_IMAGE=%s\n' "$image" > "$nouvelle/version.env"
+  touch "$nouvelle"
+  rm -f "$COMPOSE_RECU"
+
+  if activer "$nouvelle" && attendre_sante; then
+    nettoyer_versions
+    echo "✔ version $version en service"
+    return 0
+  fi
+
+  echo "✖ la version $version ne répond pas"
+  journal
+  if [ -n "$precedente" ] && [ "$precedente" != "$nouvelle" ]; then
+    echo "↩ retour automatique à $(basename "$precedente")"
+    ln -sfn "$precedente" "$BASE/current"
+    sudo "$COMPOSE" up -d --remove-orphans || true
+    if [ -n "$lien_previous" ] && version_valide "$lien_previous"; then
+      ln -sfn "$lien_previous" "$BASE/previous"
+    else
+      rm -f "$BASE/previous"
+    fi
     if attendre_sante; then
-      echo "✔ version $(basename "$PRECEDENTE") en ligne"
-      exit 0
+      echo "↩ $(basename "$precedente") est de nouveau en service"
+    else
+      echo "✖ la version précédente ne répond pas non plus"
+      journal
     fi
-    journal
-    conseil_restauration
-    exit 1
-    ;;
+  else
+    echo "✖ aucune version précédente à réactiver"
+  fi
+  echo "ℹ restauration de la base si besoin : README du dépôt infra, « Sauvegardes »"
+  exit 1
+}
 
-  *)
-    echec "action inconnue : $ACTION (deployer <version> ou revenir)"
-    ;;
+revenir() {
+  local precedente
+  precedente="$(readlink -e "$BASE/previous" || true)"
+  if [ -z "$precedente" ] || ! version_valide "$precedente"; then
+    echec "aucune version précédente disponible"
+  fi
+  activer "$precedente"
+  if attendre_sante; then
+    echo "✔ retour à $(basename "$precedente") terminé"
+  else
+    journal
+    echec "la version $(basename "$precedente") ne répond pas"
+  fi
+}
+
+case "${1:-}" in
+  deployer) [ -n "${2:-}" ] || echec "usage : $0 deployer <image> [<utilisateur du registre>]"; deployer "$2" "${3:-}" ;;
+  revenir) revenir ;;
+  *) echec "usage : $0 deployer <image> [<utilisateur du registre>] | revenir" ;;
 esac

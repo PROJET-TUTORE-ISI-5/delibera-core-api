@@ -21,10 +21,21 @@ La conception de référence est le **cahier de conception**, dans sa version en
 ## Prérequis
 
 - **JDK 21** (Temurin conseillé).
-- **Docker Desktop** : base de développement (`compose.yaml`) et tests d'intégration (Testcontainers).
+- **Docker Desktop** : base de développement (`compose.yaml`), API en conteneur (profil `docker`) et tests d'intégration (Testcontainers).
 - Maven n'est pas nécessaire : utilisez `mvnw` (Linux, macOS) ou `mvnw.cmd` (Windows).
 
 ## Démarrer en local
+
+Deux façons de lancer l'API, avec la même base PostgreSQL et le même Mailpit (`compose.yaml`) :
+
+| Mode | Profils Spring | L'API tourne… | À utiliser pour |
+| --- | --- | --- | --- |
+| Développement | `dev` | sur le poste (mvnw ou IDE) | écrire et déboguer le code |
+| Conteneur | `dev,docker` | dans Docker, image du `Dockerfile` | vérifier l'image, travailler sur le front sans JDK |
+
+Le profil `docker` (`application-docker.yml`) ne contient que ce qui change dans un conteneur : les autres services se joignent par leur nom (`postgres`, `mailpit`) et l'API écoute sur toutes les interfaces. Il s'ajoute toujours après un autre profil : `dev,docker` en local, `prod,docker` en production.
+
+### Mode développement (profil `dev`)
 
 1. Lancer PostgreSQL et Mailpit :
 
@@ -43,14 +54,24 @@ La conception de référence est le **cahier de conception**, dans sa version en
 
    **Variante sans `compose.yaml`** : lancer `TestDeliberaApplication` (dans `src/test/java`), qui démarre une base PostgreSQL jetable avec Testcontainers.
 
-3. Adresses utiles :
+### Mode conteneur (profils `dev,docker`)
 
-   | Service | Adresse |
-   | --- | --- |
-   | API | http://localhost:8080/api/v1 |
-   | Swagger UI | http://localhost:8080/swagger-ui.html |
-   | État de santé | http://localhost:8080/actuator/health |
-   | Courriels reçus (Mailpit) | http://localhost:8025 |
+```bash
+docker compose --profile api up -d --build   # construit l'image et lance PostgreSQL, Mailpit et l'API
+docker compose logs -f api                   # journal de l'API
+docker compose --profile api down            # arrêt (ajouter -v pour effacer la base locale)
+```
+
+Relancer la même commande `up -d --build` après une modification du code reconstruit l'image. Les deux modes utilisent le port 8080 : n'en lancer qu'un à la fois.
+
+### Adresses utiles
+
+| Service | Adresse |
+| --- | --- |
+| API | http://localhost:8080/api/v1 |
+| Swagger UI | http://localhost:8080/swagger-ui.html |
+| État de santé | http://localhost:8080/actuator/health |
+| Courriels reçus (Mailpit) | http://localhost:8025 |
 
 ## Tests
 
@@ -58,7 +79,7 @@ La conception de référence est le **cahier de conception**, dans sa version en
 ./mvnw verify
 ```
 
-Les tests d'intégration démarrent PostgreSQL dans Docker. Le rapport de couverture est produit dans `target/site/jacoco/index.html`. Le pipeline (`.github/workflows/ci-cd.yml`) lance la même commande à chaque push sur `main` ou `develop` et à chaque demande de fusion vers ces branches.
+Les tests d'intégration démarrent PostgreSQL dans Docker. Le rapport de couverture est produit dans `target/site/jacoco/index.html`. Le pipeline (`.github/workflows/ci-cd.yml`) lance la même commande à chaque push sur `main` ou `develop` et à chaque demande de fusion vers ces branches, puis construit l'image Docker et vérifie qu'elle démarre avec la configuration de production.
 
 ## Organisation du code
 
@@ -106,27 +127,28 @@ Les règles complètes de contribution (branches, documentation de chaque foncti
 
 ## Déploiement continu
 
-**Chaque push sur `main` déploie l'API en production**, sur l'instance EC2 gérée par Terraform (dépôt `PROJET-TUTORE-ISI-5/infra`).
+**Chaque push sur `main` déploie l'API en production**, en conteneurs, sur l'instance EC2 gérée par Terraform (dépôt `PROJET-TUTORE-ISI-5/infra`). Sur l'instance, `docker compose` lance deux conteneurs décrits par `deploy/compose.prod.yaml` : l'API (profils `prod,docker`) et PostgreSQL 16, dont les données sont dans le volume `delibera-api-pgdata`. Nginx relaie `/api/` vers l'API, publiée sur `127.0.0.1:8080` seulement.
 
 | Étape | Où | Détail |
 | --- | --- | --- |
-| 1. Compilation et tests | GitHub Actions | `./mvnw verify` (tests unitaires et d'intégration). Le JAR n'est produit que si tout passe. |
-| 2. Envoi | GitHub Actions → EC2 (SSH) | Le JAR testé et `deploy/remote-deploy.sh` sont copiés sur l'instance. |
-| 3. Sauvegarde | EC2 | `pg_dump` de la base avant la nouvelle version ; les 10 dernières sont gardées dans `/var/backups/delibera-api`. |
-| 4. Activation | EC2 | Nouvelle version dans `/opt/delibera-api/releases/<commit>`, lien `current` basculé, service `delibera-api` redémarré. Flyway applique les migrations au démarrage. |
-| 5. Contrôle de santé | EC2 | `/actuator/health` doit répondre `UP` en moins de 3 minutes, **sinon retour automatique à la version précédente**. |
-| 6. Vérification | GitHub Actions → Internet | `http://<EC2_HOST>/api/v1/…` doit répondre 401 (Nginx, API et Spring Security en place). |
+| 1. Compilation et tests | GitHub Actions | `./mvnw verify` (tests unitaires et d'intégration). |
+| 2. Image | GitHub Actions | Construction du `Dockerfile`, puis test de fumée : l'image démarre avec PostgreSQL et `deploy/compose.prod.yaml`, `/actuator/health` répond `UP` et `/api/v1` répond 401. |
+| 3. Publication | GitHub Actions → ghcr.io | `ghcr.io/projet-tutore-isi-5/delibera-core-api:<commit>` (et `:main`). |
+| 4. Sauvegarde | EC2 | `pg_dump` de la base avant la nouvelle version ; les 10 dernières sont gardées dans `/var/backups/delibera-api`. |
+| 5. Activation | EC2 | Nouvelle version dans `/opt/delibera-api/releases/<commit>` (fichier compose et image), lien `current` basculé, `docker compose up -d`. Flyway applique les migrations au démarrage. |
+| 6. Contrôle de santé | EC2 | `/actuator/health` doit répondre `UP` en moins de 3 minutes, **sinon retour automatique à la version précédente**. |
+| 7. Vérification | GitHub Actions → Internet | `http://<EC2_HOST>/api/v1/…` doit répondre 401 (Nginx, API et Spring Security en place). |
 
-- **Retour arrière manuel** : Actions > CI/CD > *Run workflow* sur `main`, action `revenir`. La version qui tournait avant l'actuelle est réactivée, sans recompiler.
+- **Retour arrière manuel** : Actions > CI/CD > *Run workflow* sur `main`, action `revenir`. La version qui tournait avant l'actuelle est réactivée ; son image est encore sur l'instance.
 - **Redéploiement** : même écran, action `deployer`.
-- **Sur l'instance** : `sudo journalctl -u delibera-api -f` (journal), `sudo systemctl status delibera-api`.
-- **Configuration de production** : `/etc/delibera-api/delibera-api.env`, créé par Terraform. Les secrets (base, JWT) sont générés sur l'instance et n'en sortent pas.
-- **Migrations** : une migration doit rester compatible avec la version précédente de l'API, car le retour arrière ne défait pas le schéma (AGENT.md, section 7). En dernier recours, restaurer la sauvegarde d'avant déploiement avec `pg_restore`.
-- **GitHub** : variable `EC2_HOST` et secret `EC2_SSH_KEY`, les mêmes que pour `delibera-ui` (au niveau de l'organisation ou du dépôt). L'environnement `production` peut exiger une approbation avant chaque déploiement (Settings > Environments).
+- **Sur l'instance** : `sudo delibera-compose ps` (état), `sudo delibera-compose logs -f api` (journal), `sudo delibera-compose restart api`. `delibera-compose` est `docker compose` appliqué à la version en service.
+- **Configuration de production** : `/etc/delibera-api/delibera-api.env`, créé par Terraform (modèle : `.env.example`). Les secrets (base, JWT) sont générés sur l'instance et n'en sortent pas.
+- **Migrations** : une migration doit rester compatible avec la version précédente de l'API, car le retour arrière ne défait pas le schéma (AGENT.md, section 7). En dernier recours, restaurer la sauvegarde d'avant déploiement (README du dépôt `infra`).
+- **GitHub** : variable `EC2_HOST` et secret `EC2_SSH_KEY`, les mêmes que pour `delibera-ui` (au niveau de l'organisation ou du dépôt). Le registre ghcr.io utilise le jeton de GitHub Actions. L'environnement `production` peut exiger une approbation avant chaque déploiement (Settings > Environments).
 
-## Configuration (profil `prod`)
+## Configuration (profils `prod,docker`)
 
-Voir `.env.example`. Variables principales : `DELIBERA_DB_URL`, `DELIBERA_DB_USER`, `DELIBERA_DB_PASSWORD`, `DELIBERA_JWT_SECRET` (au moins 32 caractères), `DELIBERA_CORS_ORIGINES`, `DELIBERA_SMTP_HOST`, `DELIBERA_SMTP_PORT`, `DELIBERA_SMTP_USER`, `DELIBERA_SMTP_PASSWORD`.
+Voir `.env.example`. Variables principales : `DELIBERA_DB_USER`, `DELIBERA_DB_PASSWORD`, `DELIBERA_JWT_SECRET` (au moins 32 caractères), `DELIBERA_CORS_ORIGINES`, `JAVA_TOOL_OPTIONS` (mémoire de la JVM), `DELIBERA_SMTP_HOST`, `DELIBERA_SMTP_PORT`, `DELIBERA_SMTP_USER`, `DELIBERA_SMTP_PASSWORD`. Dans un conteneur, la base est jointe par défaut à `jdbc:postgresql://postgres:5432/delibera` (`DELIBERA_DB_URL` pour changer).
 
 ## Feuille de route
 

@@ -1,0 +1,22 @@
+# Surcouche « l'API tourne dans un conteneur », toujours ajoutée APRÈS un autre profil :
+#   dev,docker  en local  (compose.yaml, service api : docker compose --profile api up -d --build)
+#   prod,docker sur l'EC2 (deploy/compose.prod.yaml)
+# Elle ne contient que ce qui change dans un conteneur : les autres services se joignent par leur
+# nom dans le réseau compose, et l'API écoute sur toutes les interfaces du conteneur (le port n'est
+# publié que sur la machine : 127.0.0.1 sur l'EC2).
+server:
+  address: 0.0.0.0
+
+spring:
+  datasource:
+    url: ${DELIBERA_DB_URL:jdbc:postgresql://postgres:5432/delibera}
+  mail:
+    # En local : Mailpit, service du compose. Sur l'EC2 : DELIBERA_SMTP_HOST (configuration de l'instance).
+    host: ${DELIBERA_SMTP_HOST:mailpit}
+
+management:
+  endpoint:
+    health:
+      # /actuator/health/liveness et /actuator/health/readiness pour superviser le conteneur
+      probes:
+        enabled: true
