@@ -1,6 +1,12 @@
+# Contexte de construction de l'image : seuls le wrapper Maven, pom.xml et src/main servent.
 target/
 .git/
+.github/
 .idea/
 .vscode/
 *.iml
 .env
+deploy/
+src/test/
+compose*.yaml
+**/*.md

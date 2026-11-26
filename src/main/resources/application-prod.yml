@@ -1,9 +1,15 @@
 # Serveur : toutes les valeurs sensibles viennent des variables d'environnement
-# (DELIBERA_DB_URL, DELIBERA_DB_USER, DELIBERA_DB_PASSWORD, DELIBERA_JWT_SECRET,
-# DELIBERA_CORS_ORIGINES, DELIBERA_SMTP_*).
+# (DELIBERA_DB_USER, DELIBERA_DB_PASSWORD, DELIBERA_JWT_SECRET, DELIBERA_CORS_ORIGINES,
+# DELIBERA_SMTP_*, et DELIBERA_DB_URL hors conteneur). Modèle : .env.example.
 server:
-  # L'API est derrière Nginx, qui termine le HTTPS.
+  # L'API est derrière Nginx : sur l'EC2, son conteneur n'est publié que sur 127.0.0.1:8080.
   forward-headers-strategy: framework
+  # Au redémarrage (déploiement), les requêtes en cours se terminent avant l'arrêt.
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
 springdoc:
   api-docs:

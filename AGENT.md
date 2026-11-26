@@ -252,6 +252,9 @@ Swagger UI et `/v3/api-docs` sont désactivés en production (`application-prod.
 - Le schéma est géré **uniquement par Flyway** (`src/main/resources/db/migration`). Hibernate ne fait que vérifier (`ddl-auto: validate`). Ne passez jamais `ddl-auto` à `update` ou `create`.
 - Nommage des migrations : `V<n>__<description_en_minuscules>.sql`, par exemple `V3__creer_tables_referentiel.sql`. Avant d'en créer une, regardez le dernier numéro sur `develop`. En cas de collision avec une autre branche, renumérotez **avant** la fusion.
 - **Une migration déjà fusionnée dans `develop` ne se modifie jamais** : écrivez une nouvelle migration.
+- **Une migration reste compatible avec la version précédente de l'API.** En cas d'échec d'un déploiement, le pipeline réactive automatiquement l'ancienne version, mais il ne défait pas le schéma. Pour renommer ou supprimer une colonne ou une table, procédez en deux livraisons :
+  1. ajouter le nouvel élément, et faire fonctionner le code avec les deux ;
+  2. supprimer l'ancien élément dans une livraison suivante.
 - Pour chaque table :
   - nom en `snake_case` au singulier (`annee_academique`) ;
   - colonnes `id`, `verrou`, `cree_le` et `modifie_le` ;
@@ -386,7 +389,7 @@ Exemple : le choix de séquences plutôt que de colonnes auto-incrémentées pou
 
 | Branche | Rôle | Qui écrit dessus |
 | --- | --- | --- |
-| `main` | Version stable, une étiquette `v0.<itération>.0` à la fin de chaque itération | Fusion depuis `develop` uniquement, par l'équipe |
+| `main` | Version en production : **chaque push sur `main` déploie l'API** (README, « Déploiement continu »). Étiquette `v0.<itération>.0` à la fin de chaque itération. | Fusion depuis `develop` uniquement, par l'équipe |
 | `develop` | Intégration | Fusion des demandes de fusion relues |
 | `feature/<module>-<sujet>` | Une fonctionnalité | L'agent ou le développeur qui l'a créée |
 | `fix/<module>-<sujet>` | Une correction | Idem |
@@ -488,7 +491,7 @@ La relecture par un membre de l'équipe est obligatoire avant la fusion.
 - S'écarter du `SPEC.md` ou du cahier de conception (nom, modèle, algorithme, dépendance entre modules).
 - Implémenter un élément marqué **[Proposition]** dans un `SPEC.md`.
 - Modifier un `SPEC.md` pour autre chose que reporter une décision de l'équipe ou ajouter une question ouverte.
-- Modifier l'intégration continue, le `Dockerfile` ou `compose.yaml`.
+- Modifier l'intégration continue, le `Dockerfile`, `compose.yaml` ou un fichier de `deploy/`.
 - Supprimer des fichiers, ou toute action sur `main` ou `develop`.
 
 ## 13. Interdits
@@ -517,7 +520,8 @@ La relecture par un membre de l'équipe est obligatoire avant la fusion.
 | Jackson | 3.x | Paquetage `tools.jackson.databind` ; les annotations restent dans `com.fasterxml.jackson.annotation` |
 | JUnit | 6.0 (Jupiter) | |
 | Testcontainers | 2.0 | `org.testcontainers.postgresql.PostgreSQLContainer`, artefacts `testcontainers-*` |
-| PostgreSQL | 16 | |
+| PostgreSQL | 16 | Image `postgres:16-alpine`, en local comme en production |
+| Docker | Image `eclipse-temurin:21-jre-noble` | L'API tourne en conteneur en production (profils `prod,docker`) |
 | springdoc-openapi | 3.1 | |
 | MapStruct | 1.6 | Les mappers sont des beans Spring (configuré dans `pom.xml`) |
 
@@ -539,7 +543,21 @@ La relecture par un membre de l'équipe est obligatoire avant la fusion.
 docker compose up -d                                         # PostgreSQL 16 + Mailpit (http://localhost:8025)
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev        # API sur http://localhost:8080
 ./mvnw verify                                                # compilation + tous les tests + couverture
+docker compose --profile api up -d --build                   # API en conteneur (profils dev,docker)
 ```
+
+**Profils Spring et configuration :**
+
+| Profil | Où | Contenu |
+| --- | --- | --- |
+| `dev` | poste du développeur | base et Mailpit de `compose.yaml` sur localhost, secret JWT de développement, Swagger |
+| `docker` | toujours après un autre profil (`dev,docker`, `prod,docker`) | uniquement ce qui change dans un conteneur : noms des services (`postgres`, `mailpit`), écoute sur toutes les interfaces, sondes de santé |
+| `prod` | EC2, en conteneur | tout vient de variables d'environnement, Swagger désactivé |
+| `test` | tests automatisés | base Testcontainers |
+
+- Un nouveau réglage commun va dans `application.yml`, avec une variable d'environnement `DELIBERA_…` et une valeur par défaut sûre.
+- Ne rien mettre dans `application-docker.yml` qui ne dépende pas du conteneur.
+- Une variable nécessaire en production est ajoutée à `.env.example` et signalée dans la demande de fusion : l'équipe la renseigne sur l'instance (fichier créé par Terraform, dépôt `infra`).
 
 Swagger UI : http://localhost:8080/swagger-ui.html. Variante sans `compose.yaml` : lancer `TestDeliberaApplication` (dans `src/test/java`).
 

@@ -1,0 +1,53 @@
+# Production sur l'EC2 : l'API et sa base PostgreSQL, en conteneurs.
+# Copié par le pipeline dans /opt/delibera-api/releases/<version>/compose.yaml, puis lancé par
+# la commande delibera-compose de l'instance (installée par Terraform, dépôt infra) :
+#   sudo delibera-compose ps | logs -f api | restart api
+#
+# Valeurs lues dans les fichiers d'environnement passés à docker compose (--env-file) :
+#   /etc/delibera-api/delibera-api.env   secrets et réglages de l'instance (créé par Terraform)
+#   releases/<version>/version.env       DELIBERA_API_IMAGE, l'image de cette version
+#
+# Le pipeline lance aussi ce fichier sur le runner (test de fumée de l'image) :
+# DELIBERA_ENV_FILE y désigne un fichier temporaire.
+name: delibera-api
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: delibera
+      POSTGRES_USER: ${DELIBERA_DB_USER:?DELIBERA_DB_USER manquant}
+      POSTGRES_PASSWORD: ${DELIBERA_DB_PASSWORD:?DELIBERA_DB_PASSWORD manquant}
+      TZ: UTC
+    # Réglages pour une petite instance (1 à 2 Go de mémoire)
+    command: ["postgres", "-c", "shared_buffers=96MB", "-c", "max_connections=30", "-c", "timezone=UTC"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d delibera"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Aucun port publié : la base n'est joignable que par l'API, dans le réseau du compose.
+
+  api:
+    image: ${DELIBERA_API_IMAGE:?DELIBERA_API_IMAGE manquant}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ${DELIBERA_ENV_FILE:-/etc/delibera-api/delibera-api.env}
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,docker
+    # Publié sur la machine seulement : Nginx relaie /api/ vers ce port.
+    ports:
+      - "127.0.0.1:8080:8080"
+    # Arrêt propre : les requêtes en cours se terminent (server.shutdown: graceful, 20 s).
+    stop_grace_period: 40s
+
+volumes:
+  pgdata:
+    # Nom fixe : la base survit aux changements de version et au renommage du projet.
+    name: delibera-api-pgdata

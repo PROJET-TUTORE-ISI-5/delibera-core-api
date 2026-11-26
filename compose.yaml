@@ -1,6 +1,13 @@
-# Services de développement : PostgreSQL 16 et Mailpit (faux serveur SMTP).
-# Lancement : docker compose up -d
-# Courriels envoyés par l'API : http://localhost:8025
+# Environnement local.
+#
+#  - Profil dev (API lancée par mvnw ou l'IDE) : PostgreSQL 16 et Mailpit seulement
+#      docker compose up -d
+#  - Profil docker (API dans un conteneur, image construite depuis le Dockerfile) :
+#      docker compose --profile api up -d --build
+#      docker compose logs -f api
+#
+# API : http://localhost:8080 ; courriels envoyés par l'API : http://localhost:8025
+# Arrêt : docker compose --profile api down (ajouter -v pour effacer la base locale)
 services:
   postgres:
     image: postgres:16-alpine
@@ -24,6 +31,21 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+  api:
+    profiles: [api]
+    build: .
+    image: delibera-core-api:local
+    environment:
+      # dev (Swagger, secret JWT de développement, journaux détaillés) + docker (hôtes du compose)
+      SPRING_PROFILES_ACTIVE: dev,docker
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
 
 volumes:
   delibera-pgdata:
